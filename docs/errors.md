@@ -51,3 +51,16 @@ which confirms the server is genuinely ready. Added start_period of
 
 **Lesson:**
 Don't assume all software works the exact same way. Just because the standard version answers to "Are you OK?", it doesn't mean this specific, locked-down version will Always check the rules first.
+
+## Checkpoint 001 — Database layer tests passing
+
+**Date:** 4 June 2026
+
+**What passed:**
+All 5 repository tests green. Idempotency confirmed working.
+The same event sent twice produces exactly one row in the database.
+DLQ write confirmed working.
+
+**What this proves:**
+ON CONFLICT on event_id prevents duplicate financial records
+even when Kafka delivers the same message more than once.
