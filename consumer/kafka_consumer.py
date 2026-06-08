@@ -1,3 +1,12 @@
+from monitoring.metrics import (
+    events_processed_total,
+    events_failed_total,
+    event_processing_duration,
+    dlq_messages_total,
+    consumer_lag,
+    start_metrics_server,
+)
+import time
 import os
 import json
 import time
@@ -34,28 +43,37 @@ RETRY_BASE_DELAY = 1
 def process_message(message) -> bool:
     """
     Processes a single Kafka message from start to finish.
-
-    Takes the raw Kafka message, deserialises it, enriches it
-    with Kafka metadata, and saves it to PostgreSQL.
-
-    Returns True if processing succeeded, False if it failed.
-    The caller uses this return value to decide whether to retry.
     """
+    start = time.time()
+
     try:
-        # message.value is raw bytes from Kafka.
-        # We serialised as JSON when producing so we deserialise
-        # the same way here to get our Python dict back.
         event = json.loads(message.value.decode("utf-8"))
 
-        # Attach Kafka metadata to the event before saving.
-        # This is how we record exactly where in Kafka this
-        # message came from for audit and replay purposes.
         event["kafka_topic"] = message.topic
         event["kafka_partition"] = message.partition
         event["kafka_offset"] = message.offset
         event["payload"] = json.dumps(event)
 
-        return save_event(event)
+        success = save_event(event)
+
+        duration = time.time() - start
+
+        if success:
+            # Record the processing duration in the histogram.
+            # Every call to observe() adds one data point.
+            # Prometheus aggregates these into percentiles.
+            event_processing_duration.observe(duration)
+
+            # Increment the success counter with labels.
+            # Labels let you break down the metric by event type
+            # so you can see how many TRANSFER vs DEPOSIT events
+            # were processed in a given time window.
+            events_processed_total.labels(
+                event_type=event.get("event_type", "unknown"),
+                account_id_prefix=event.get("account_id", "unknown")[:4]
+            ).inc()
+
+        return success
 
     except json.JSONDecodeError as e:
         logger.error(
@@ -64,6 +82,7 @@ def process_message(message) -> bool:
             message.offset,
             str(e)
         )
+        events_failed_total.labels(failure_reason="json_decode_error").inc()
         return False
 
     except Exception as e:
@@ -73,6 +92,7 @@ def process_message(message) -> bool:
             message.offset,
             str(e)
         )
+        events_failed_total.labels(failure_reason="unexpected_error").inc()
         return False
 
 
@@ -151,11 +171,12 @@ def process_with_retry(message, consumer) -> bool:
         failure_reason=last_error,
         retry_count=MAX_RETRIES
     )
-
+    dlq_messages_total.inc()
     return False
 
 
 def run_consumer():
+    start_metrics_server()
     """
     Main consumer loop. Runs until interrupted.
 

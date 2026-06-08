@@ -64,3 +64,18 @@ DLQ write confirmed working.
 **What this proves:**
 ON CONFLICT on event_id prevents duplicate financial records
 even when Kafka delivers the same message more than once.
+
+## Checkpoint 002 — End-to-end pipeline and idempotency proven
+
+**Date:** 6 June 2026
+
+**What we proved:**
+Sent 10 events through the pipeline twice using identical event_ids.
+Kafka delivered 20 messages. Consumer processed all 20.
+PostgreSQL count increased by exactly 10, not 20.
+ON CONFLICT handled duplicates silently with zero errors.
+
+**What this means:**
+At-least-once delivery from Kafka combined with idempotent upserts
+means the system is safe even when the same event arrives multiple
+times. This is the core correctness guarantee of the pipeline.
